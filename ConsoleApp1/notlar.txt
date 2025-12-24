@@ -1,0 +1,42 @@
+
+        //static void Main(string[] args)
+        //{
+        //    string _testdataPath = @"C:\ocr";
+        //    string pdfPath = @"D:\input.pdf"; // PDF dosyanızın yolu
+
+        //    // Magick.NET ayarları: PDF'i resme dönüştürürken çözünürlük (DPI) çok önemlidir.
+        //    // OCR için genellikle 300 DPI idealdir.
+        //    var settings = new MagickReadSettings
+        //    {
+        //        Density = new Density(300, 300) // 300 DPI yüksek başarı oranı sağlar
+        //    };
+
+        //    using (var engine = new TesseractEngine(_testdataPath, "tur", EngineMode.Default))
+        //    {
+        //        using (var images = new MagickImageCollection())
+        //        {
+        //            // PDF'in tüm sayfalarını oku
+        //            images.Read(pdfPath, settings);
+
+        //            int pageCount = 1;
+        //            foreach (var image in images)
+        //            {
+        //                // MagickImage'i Tesseract'ın anlayacağı formatta bir byte array'e çeviriyoruz
+        //                byte[] imageBytes = image.ToByteArray(MagickFormat.Png);
+
+        //                using (var img = Pix.LoadFromMemory(imageBytes))
+        //                {
+        //                    using (var page = engine.Process(img))
+        //                    {
+        //                        string text = page.GetText();
+        //                        Console.WriteLine($"--- Sayfa {pageCount} ---");
+        //                        Console.WriteLine("Güven Oranı: {0}", page.GetMeanConfidence());
+        //                        Console.WriteLine("Metin:\r\n{0}", text);
+        //                    }
+        //                }
+        //                pageCount++;
+        //            }
+        //            Console.ReadLine();
+        //        }
+        //    }
+        //}
