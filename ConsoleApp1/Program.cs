@@ -1,15 +1,21 @@
 ﻿using ImageMagick;
-using Tesseract;
+using ImageMagick.Drawing;
 using System;
 using System.Collections.Generic;
-using System.IO;
+using System.Globalization;
+using System.Linq;
+using System.Text.RegularExpressions;
+using Tesseract;
 
-namespace OcrProjesi
+namespace YmmOcrSistemi
 {
+    public enum ExtractionType { TableColumnList, TableColumnSum, SingleValue }
+
     public class OcrRule
     {
         public string FieldName { get; set; }
         public string AnchorText { get; set; }
+        public ExtractionType Type { get; set; }
         public int XOffset { get; set; }
         public int YOffset { get; set; }
         public int Width { get; set; }
@@ -20,117 +26,222 @@ namespace OcrProjesi
     {
         static void Main(string[] args)
         {
-            string tessDataPath = @"C:\ocr";
+            string tessData = @"C:\ocr";
             string pdfPath = @"D:\input.pdf";
 
-            // NOT: Önceki çıktınızda "Matrah" kelimesini okumuş. 
-            // Bu, kutunun çok sağa veya yukarıda kaldığını gösterir.
-            // Bu yüzden XOffset'i küçültüp YOffset'i (aşağı inmeyi) artırıyoruz.
+            // Admin panelinden gelecek dinamik kural seti
             var rules = new List<OcrRule>
             {
-                new OcrRule {
-                    FieldName = "İşlem Türü",
-                    AnchorText = "KISMİ",
-                    // 'XOffset'i -450 yaparak metnin en soluna (sayfa başına) ulaşıyoruz.
-                    XOffset = -650, 
-                    // Mevcut görselde satır çok yukarıda kalmış, YOffset'i biraz daha artırarak 
-                    // metni kutunun ortasına alıyoruz.
-                    YOffset = 60,  
-                    // Genişliği biraz artırıyoruz ki metin sağdan da kesilmesin ama 
-                    // rakamlara çok girmesin.
-                    Width = 2500,
-                    Height = 450
+                // Örnek 1 & 2: Tevkifat Uygulanmayanlar Vergi Listesi ve Toplamı
+               new OcrRule {
+                    FieldName = "Tevkifat Uygulanmayan Vergi",
+                    AnchorText = "TEVKİFAT UYGULANMAYAN İŞLEMLER",
+                    Type = ExtractionType.TableColumnSum,
+                    XOffset = 1300, // 1800'den 1500'e çektik
+                    YOffset = 50,  // Başlığın biraz daha altına (rakamların başladığı yer)
+                    Width = 200,
+                    Height = 150
                 }
             };
 
-            ProcessPdf(pdfPath, tessDataPath, rules);
+            //var rules = new List<OcrRule>
+            //{
+            //    // Örnek 1 & 2: Tevkifat Uygulanmayanlar Vergi Listesi ve Toplamı
+            //    new OcrRule {
+            //        FieldName = "Tevkifat Uygulanmayan Vergi",
+            //        AnchorText = "TEVKİFAT UYGULANMAYAN İŞLEMLER",
+            //        Type = ExtractionType.TableColumnSum,
+            //        XOffset = 1800, YOffset = 50, Width = 400, Height = 500
+            //    },
+            //    // Örnek 3: Kısmi Tevkifat İşlem Türü
+            //    new OcrRule {
+            //        FieldName = "İşlem Türü",
+            //        AnchorText = "KISMİ TEVKİFAT UYGULANAN İŞLEMLER",
+            //        Type = ExtractionType.TableColumnList,
+            //        XOffset = -450, YOffset = 80, Width = 1100, Height = 400
+            //    },
+            //    // Örnek 4: İade Edilmesi Gereken KDV (Sayfa 2)
+            //    new OcrRule {
+            //        FieldName = "İade Edilmesi Gereken KDV",
+            //        AnchorText = "DİĞER İADE HAKKI DOĞURAN İŞLEMLER",
+            //        Type = ExtractionType.SingleValue,
+            //        XOffset = 1800, YOffset = 450, Width = 400, Height = 100
+            //    }
+            //};
+
+            ProcessYmmReport(pdfPath, tessData, rules);
+            Console.ReadLine();
         }
 
-        static void ProcessPdf(string pdfPath, string tessData, List<OcrRule> rules)
+        static void ProcessYmmReport(string pdfPath, string tessData, List<OcrRule> rules)
         {
             var settings = new MagickReadSettings { Density = new Density(300, 300) };
             using (var engine = new TesseractEngine(tessData, "tur", EngineMode.Default))
+            using (var images = new MagickImageCollection())
             {
-                using (var images = new MagickImageCollection())
+                images.Read(pdfPath, settings);
+
+                foreach (var rule in rules)
                 {
-                    images.Read(pdfPath, settings);
-                    for (int i = 0; i < images.Count; i++)
+                    Console.WriteLine($"\n--- {rule.FieldName} İşleniyor ---");
+                    int pageIndex = rule.AnchorText.Contains("İADE") ? 1 : 0;
+
+                    if (pageIndex >= images.Count) continue;
+                    var image = images[pageIndex];
+
+                    var results = ExecuteRule(image, engine, rule);
+
+                    // DEBUG: Toplam 0 olsa bile okunan her şeyi yazdır
+                    Console.WriteLine("OCR tarafından okunan ham satırlar:");
+                    results.ForEach(r => Console.WriteLine($"> '{r}'"));
+
+                    if (rule.Type == ExtractionType.TableColumnSum)
                     {
-                        var currentImage = images[i];
-                        foreach (var rule in rules)
-                        {
-                            string result = ExecuteRuleWithMagickCrop(currentImage, engine, rule, i + 1);
-                            Console.WriteLine($"Sayfa {i + 1} - {rule.FieldName}: {result}");
-                        }
+                        decimal total = CalculateTotal(results);
+                        Console.WriteLine($"Hesaplanan Toplam: {total:N2}");
                     }
                 }
             }
         }
 
-        static string ExecuteRuleWithMagickCrop(IMagickImage<byte> fullImage, TesseractEngine engine, OcrRule rule, int pageNum)
+        static List<string> ExecuteRule(IMagickImage<byte> img, TesseractEngine engine, OcrRule rule)
         {
-            Rect anchorRect = Rect.Empty;
-
-            // 1. ADIM: Koordinatları bulmak için tam resmi Tesseract'a ver
-            using (var fullPix = Pix.LoadFromMemory(fullImage.ToByteArray(MagickFormat.Png)))
+            Rect anchor = Rect.Empty;
+            using (var pix = Pix.LoadFromMemory(img.ToByteArray(MagickFormat.Png)))
+            using (var page = engine.Process(pix))
             {
-                using (var page = engine.Process(fullPix))
+                anchor = FindTextCoordinates(page, rule.AnchorText);
+            }
+
+            if (anchor != Rect.Empty)
+            {
+                // 1. Hedef koordinatları hesapla
+                int tx = Math.Max(0, anchor.X1 + rule.XOffset);
+                int ty = Math.Max(0, anchor.Y1 + rule.YOffset);
+
+                // --- TEŞHİS MODU: Tam sayfa üzerinde işaretleme yap ---
+                using (var diagnosticImg = img.Clone())
                 {
-                    using (var iter = page.GetIterator())
-                    {
-                        iter.Begin();
-                        do
-                        {
-                            string word = iter.GetText(PageIteratorLevel.Word);
-                            if (!string.IsNullOrEmpty(word) && word.Contains(rule.AnchorText, StringComparison.OrdinalIgnoreCase))
-                            {
-                                iter.TryGetBoundingBox(PageIteratorLevel.Word, out anchorRect);
-                                break;
-                            }
-                        } while (iter.Next(PageIteratorLevel.Word));
-                    }
+                    var drawables = new Drawables()
+                        .FillColor(MagickColors.Transparent)
+                        .StrokeWidth(3)
+                        // Çapayı KIRMIZI ile işaretle
+                        .StrokeColor(MagickColors.Red)
+                        .Rectangle(anchor.X1, anchor.Y1, anchor.X1 + anchor.Width, anchor.Y1 + anchor.Height)
+                        // Kesilecek alanı MAVİ ile işaretle
+                        .StrokeColor(MagickColors.Blue)
+                        .Rectangle(tx, ty, tx + rule.Width, ty + rule.Height);
+
+                    diagnosticImg.Draw(drawables);
+                    diagnosticImg.Write($"debug_FULL_{rule.FieldName.Replace(" ", "_")}.png");
+                    Console.WriteLine($"[TEŞHİS] Çerçeveli tam sayfa kaydedildi: debug_FULL_{rule.FieldName.Replace(" ", "_")}.png");
                 }
-            } // fullPix burada temizlenir, Tesseract motoru boşa çıkar.
 
-            // 2. ADIM: Eğer çapa bulunduysa Magick.NET ile kırp ve tekrar oku
-            if (anchorRect != Rect.Empty)
-            {
-                // Hedef bölgeyi hesapla
-                // 1. ADIM: Hedef bölgeyi hesapla ve uint'e dönüştür
-                // Koordinatlar negatif olamaz, Math.Max ile 0'dan küçük olmamasını sağlıyoruz
-                int targetX = Math.Max(0, anchorRect.X1 + rule.XOffset);
-                int targetY = Math.Max(0, anchorRect.Y1 + rule.YOffset);
-                uint targetWidth = (uint)rule.Width;
-                uint targetHeight = (uint)rule.Height;
-
-                using (var croppedImage = fullImage.Clone())
+                // 2. Kırpma işlemi
+                using (var cropped = img.Clone())
                 {
-                    // 2. ADIM: MagickGeometry oluştururken uint cast kullanıyoruz
-                    var geometry = new MagickGeometry(targetX, targetY, targetWidth, targetHeight);
-
-                    // 3. ADIM: Kırpma işlemi
-                    croppedImage.Crop(geometry);
-
-                    // 4. ADIM: RePage yerine ResetPage kullanın veya Page özelliğini sıfırlayın
-                    // Bu işlem kırpılan resmin koordinat sistemini (0,0) yapar.
-                    croppedImage.ResetPage();
-
-                    // DEBUG: Kırpılan bölgeyi kaydet
-                    string debugFile = $"debug_p{pageNum}_{rule.FieldName.Replace(" ", "_")}.png";
-                    croppedImage.Write(debugFile);
-
-                    // Tesseract'a gönder...
-                    using (var smallPix = Pix.LoadFromMemory(croppedImage.ToByteArray(MagickFormat.Png)))
+                    try
                     {
-                        using (var regionPage = engine.Process(smallPix))
+                        cropped.Crop(new MagickGeometry(tx, ty, (uint)rule.Width, (uint)rule.Height));
+                        cropped.ResetPage();
+
+                        string debugName = $"debug_CROP_{rule.FieldName.Replace(" ", "_")}.png";
+                        cropped.Write(debugName);
+
+                        using (var smallPix = Pix.LoadFromMemory(cropped.ToByteArray(MagickFormat.Png)))
+                        using (var rPage = engine.Process(smallPix))
                         {
-                            return regionPage.GetText()?.Trim();
+                            return rPage.GetText().Split('\n').Select(s => s.Trim()).Where(s => !string.IsNullOrEmpty(s)).ToList();
                         }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[HATA] Kırpma sınır dışı kaldı: {ex.Message}");
+                        return new List<string>();
                     }
                 }
             }
+            else
+            {
+                Console.WriteLine($"[HATA] Çapa bulunamadı: {rule.AnchorText}");
+            }
+            return new List<string>();
+        }
 
-            return "[Çapa Bulunamadı]";
+        static decimal CalculateTotal(List<string> values)
+        {
+            decimal total = 0;
+            foreach (var v in values)
+            {
+                // Regex ile sadece rakam, nokta ve virgülü al (diğer her şeyi temizle)
+                string clean = Regex.Replace(v, @"[^0-9,\.]", "");
+
+                if (string.IsNullOrEmpty(clean)) continue;
+
+                try
+                {
+                    // Türkiye formatı: 86.508,76 -> 86508.76 çevrimi
+                    // Önce binlik ayıracı (nokta) sil, sonra virgülü noktaya çevir
+                    if (clean.Contains(",") && clean.Contains("."))
+                        clean = clean.Replace(".", "");
+
+                    clean = clean.Replace(",", ".");
+
+                    if (decimal.TryParse(clean, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal d))
+                        total += d;
+                }
+                catch { /* Hatalı satırı atla */ }
+            }
+            return total;
+        }
+
+        private static Rect FindTextCoordinates(Page? page, string fullAnchorText)
+        {
+            var words = new List<(string Text, Rect Box)>();
+
+            // 1. Sayfadaki tüm kelimeleri ve koordinatlarını bir listeye doldur
+            using (var iter = page.GetIterator())
+            {
+                iter.Begin();
+                do
+                {
+                    string word = iter.GetText(PageIteratorLevel.Word);
+                    if (!string.IsNullOrEmpty(word) && iter.TryGetBoundingBox(PageIteratorLevel.Word, out Rect rect))
+                    {
+                        words.Add((word.ToLower(), rect));
+                    }
+                } while (iter.Next(PageIteratorLevel.Word));
+            }
+
+            // 2. Kelime listesi içinde "fullAnchorText" cümlesini ara
+            string searchTarget = fullAnchorText.ToLower();
+            string[] targetParts = searchTarget.Split(' ');
+
+            for (int i = 0; i <= words.Count - targetParts.Length; i++)
+            {
+                bool match = true;
+                for (int j = 0; j < targetParts.Length; j++)
+                {
+                    if (!words[i + j].Text.Contains(targetParts[j]))
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+
+                if (match)
+                {
+                    // Eşleşme bulundu! Cümlenin başlangıç ve bitiş koordinatlarını birleştir
+                    int x1 = words[i].Box.X1;
+                    int y1 = words[i].Box.Y1;
+                    int x2 = words[i + targetParts.Length - 1].Box.X2;
+                    int y2 = words[i + targetParts.Length - 1].Box.Y2;
+
+                    return new Rect(x1, y1, x2 - x1, y2 - y1);
+                }
+            }
+
+            return Rect.Empty;
         }
     }
 }
