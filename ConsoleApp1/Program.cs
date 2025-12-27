@@ -15,30 +15,48 @@ namespace YmmOcrSistemi
         static void Main(string[] args)
         {
             string tessData = @"C:\ocr";
-            string pdfPath = @"D:\input.pdf";
+            string pdfPath = @"D:\input1.pdf";
 
             var processor = new TableRegionProcessor(tessData);
 
             // Kural Tanımı: Kısmi Tevkifat Tablosu - İşlem Türü Sütunu
+            //var rule = new OcrRule
+            //{
+            //    FieldName = "Kısmi Tevkifat İşlem Türü",
+            //    StartAnchor = "KISMİ TEVKİFAT UYGULANAN İŞLEMLER",
+            //    ColumnHeader = "İşlem Türü",
+            //    RightLimitHeader = "Matrah", // Matrah sütununa kadar genişlik
+            //    EndAnchor = "Matrah Toplamı",
+            //    XOffset = -320, // İşlem türü başlığıyla aynı hizadan başla
+            //    Type = ExtractionType.TableColumnList
+            //};
+
             var rule = new OcrRule
             {
-                FieldName = "Kısmi Tevkifat İşlem Türü",
-                StartAnchor = "KISMİ TEVKİFAT UYGULANAN İŞLEMLER",
-                ColumnHeader = "İşlem Türü",
-                RightLimitHeader = "Matrah", // Matrah sütununa kadar genişlik
-                EndAnchor = "Matrah Toplamı",
-                XOffset = -320, // İşlem türü başlığıyla aynı hizadan başla
-                Type = ExtractionType.TableColumnList
+                FieldName = "Tevkifat_Uygulanmayan_Vergi_Toplami",
+                StartAnchor = "TEVKİFAT UYGULANMAYAN İŞLEMLER",
+                ColumnHeader = "Vergi",
+                RightLimitHeader = "", // Boş bırakıldığında otomatik olarak sayfa sonuna kadar tarar
+                EndAnchor = "KISMİ TEVKİFAT UYGULANAN İŞLEMLER",
+                XOffset = 0,
+                ManualWidth = null, // Otomatik hesaplanması için null bırakın
+                Type = ExtractionType.TableColumnSum
             };
 
-            var settings = new MagickReadSettings { Density = new Density(300, 300) };
             using (var images = new MagickImageCollection())
             {
-                images.Read(pdfPath, settings);
-                var results = processor.ExtractDynamicTableData(images[0], rule);
+                images.Read(pdfPath, new MagickReadSettings { Density = new Density(300) });
 
-                Console.WriteLine($"\n--- {rule.FieldName} Sonuçları ---");
-                results.ForEach(r => Console.WriteLine($"> {r}"));
+                var result = processor.ProcessRule(images[0], rule);
+
+                if (result is decimal total)
+                {
+                    Console.WriteLine($"{rule.FieldName}: {total:N2} TL");
+                }
+                else if (result is List<string> list)
+                {
+                    list.ForEach(x => Console.WriteLine($"Satır: {x}"));
+                }
             }
 
             Console.ReadLine();

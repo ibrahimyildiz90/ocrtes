@@ -2,8 +2,10 @@
 using ImageMagick.Drawing;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Tesseract;
 using YmmOcrSistemi;
@@ -19,7 +21,7 @@ namespace ConsoleApp1
             _engine = new TesseractEngine(tessDataPath, "tur", EngineMode.Default);
         }
 
-        public List<string> ExtractDynamicTableData(IMagickImage<byte> fullImage, OcrRule rule)
+        public object ProcessRule(IMagickImage<byte> fullImage, OcrRule rule)
         {
             // ÖNCE koordinatları tespit ediyoruz ve 'page' nesnesini hemen serbest bırakıyoruz
             Rect targetRect = Rect.Empty;
@@ -44,9 +46,30 @@ namespace ConsoleApp1
                         int tx = colHeader.X1 + rule.XOffset;
                         int ty = colHeader.Y2 + 10;
                         int th = sectionEnd.Y1 - ty - 10;
-                        int tw = rule.ManualWidth ?? (nextColHeader != Rect.Empty ? nextColHeader.X1 - tx - 10 : 800);
+                        int targetWidth;
 
-                        targetRect = new Rect(tx, ty, tw, th);
+                        if (rule.ManualWidth.HasValue)
+                        {
+                            // 1. Eğer kullanıcı elle bir genişlik vermişse onu kullan
+                            targetWidth = rule.ManualWidth.Value;
+                        }
+                        else if (!string.IsNullOrEmpty(rule.RightLimitHeader) && nextColHeader != Rect.Empty)
+                        {
+                            // 2. Eğer sağda bir sınır kolonu ismi verilmişse ve bulunmuşsa oraya kadar al
+                            targetWidth = nextColHeader.X1 - tx - 10;
+                        }
+                        else
+                        {
+                            // 3. DİNAMİK SAĞ SINIR: Sağda limit yoksa, sayfa genişliğinden tx'i çıkararak 
+                            // kalan tüm alanı (en sağa kadar) al. 
+                            // 20-30 px bir güvenlik payı (padding) bırakmak iyidir.
+                            targetWidth = (int)fullImage.Width - tx - 20;
+
+                            Console.WriteLine($"[BİLGİ] Sağ sınır belirlenmediği için sayfa sonuna kadar taranıyor. Genişlik: {targetWidth}");
+                        }
+
+                        // targetRect artık bu dinamik genişlikle oluşturulur
+                        targetRect = new Rect(tx, ty, targetWidth, th);
                     }
                 }
             } // 'page' burada dispose edildi. Engine artık yeni bir process için hazır.
@@ -57,10 +80,22 @@ namespace ConsoleApp1
                 return new List<string>();
             }
 
-            // 2. DEBUG ve OCR İşlemleri (Artık engine serbest)
+            // --- ADIM 2: Debug ve OCR (Engine serbest) ---
             GenerateDebugImages(fullImage, rule.FieldName, sectionStart, sectionEnd, targetRect);
+            var rawLines = PerformCropAndOcr(fullImage, targetRect);
 
-            return PerformCropAndOcr(fullImage, targetRect);
+            // --- ADIM 3: Veri Tipi İşleme ---
+            if (rule.Type == ExtractionType.TableColumnSum)
+            {
+                decimal total = 0;
+                foreach (var line in rawLines)
+                {
+                    total += ParseTurkishNumber(line);
+                }
+                return total; // Sayısal toplam döndür
+            }
+
+            return rawLines; // Liste olarak döndür
         }
 
         private List<string> PerformCropAndOcr(IMagickImage<byte> img, Rect region)
@@ -109,6 +144,12 @@ namespace ConsoleApp1
 
         private Rect FindTextWithConstraint(Page page, string fullText, int minY, int maxY)
         {
+            // Eğer aranacak metin null veya boşsa, işlem yapmadan boş Rect dön.
+            if (string.IsNullOrEmpty(fullText))
+            {
+                return Rect.Empty;
+            }
+
             var words = new List<(string Text, Rect Box)>();
             using (var iter = page.GetIterator())
             {
@@ -141,6 +182,39 @@ namespace ConsoleApp1
                 }
             }
             return Rect.Empty;
+        }
+
+        private decimal ParseTurkishNumber(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return 0;
+
+            // 1. Regex ile sadece rakam, nokta ve virgül dışındaki her şeyi temizle
+            string clean = Regex.Replace(text, @"[^0-9,\.]", "");
+
+            if (string.IsNullOrEmpty(clean)) return 0;
+
+            try
+            {
+                // 2. Format Dönüştürme:
+                // Türkiye formatı: 1.250,50 
+                // OCR bazen noktayı veya virgülü yanlış okuyabilir ama biz standartı takip ediyoruz:
+                // Eğer hem nokta hem virgül varsa, nokta binlik ayıracıdır (sil), virgül ondalıktır (noktaya çevir).
+                if (clean.Contains(",") && clean.Contains("."))
+                {
+                    clean = clean.Replace(".", ""); // Binlik ayıracı sil
+                }
+
+                // Virgülü nokta yap ki InvariantCulture ile decimal'e dönebilsin
+                clean = clean.Replace(",", ".");
+
+                if (decimal.TryParse(clean, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal result))
+                {
+                    return result;
+                }
+            }
+            catch { /* Hatalı satırı pas geç */ }
+
+            return 0;
         }
     }
 }
