@@ -35,42 +35,45 @@ namespace ConsoleApp1
                 sectionStart = FindTextCoordinates(page, rule.StartAnchor);
                 sectionEnd = FindTextCoordinates(page, rule.EndAnchor);
 
-                if (sectionStart != Rect.Empty && sectionEnd != Rect.Empty)
+                colHeader = FindTextWithConstraint(page, rule.ColumnHeader, sectionStart.Y1, sectionEnd.Y1);
+                var nextColHeader = FindTextWithConstraint(page, rule.RightLimitHeader, sectionStart.Y1, sectionEnd.Y1);
+
+                // Eğer bu sayfada çapalar yoksa, hiç zorlamadan null dön
+                if (sectionStart == Rect.Empty || sectionEnd == Rect.Empty)
                 {
-                    colHeader = FindTextWithConstraint(page, rule.ColumnHeader, sectionStart.Y1, sectionEnd.Y1);
-                    var nextColHeader = FindTextWithConstraint(page, rule.RightLimitHeader, sectionStart.Y1, sectionEnd.Y1);
+                    return null;
+                }
 
-                    if (colHeader != Rect.Empty)
+                if (colHeader != Rect.Empty)
+                {
+                    // Mavi Kutu Hesaplama Mantığı [cite: 35, 54]
+                    int tx = colHeader.X1 + rule.XOffset;
+                    int ty = colHeader.Y2 + 10;
+                    int th = sectionEnd.Y1 - ty - 10;
+                    int targetWidth;
+
+                    if (rule.ManualWidth.HasValue)
                     {
-                        // Mavi Kutu Hesaplama Mantığı [cite: 35, 54]
-                        int tx = colHeader.X1 + rule.XOffset;
-                        int ty = colHeader.Y2 + 10;
-                        int th = sectionEnd.Y1 - ty - 10;
-                        int targetWidth;
-
-                        if (rule.ManualWidth.HasValue)
-                        {
-                            // 1. Eğer kullanıcı elle bir genişlik vermişse onu kullan
-                            targetWidth = rule.ManualWidth.Value;
-                        }
-                        else if (!string.IsNullOrEmpty(rule.RightLimitHeader) && nextColHeader != Rect.Empty)
-                        {
-                            // 2. Eğer sağda bir sınır kolonu ismi verilmişse ve bulunmuşsa oraya kadar al
-                            targetWidth = nextColHeader.X1 - tx - 10;
-                        }
-                        else
-                        {
-                            // 3. DİNAMİK SAĞ SINIR: Sağda limit yoksa, sayfa genişliğinden tx'i çıkararak 
-                            // kalan tüm alanı (en sağa kadar) al. 
-                            // 20-30 px bir güvenlik payı (padding) bırakmak iyidir.
-                            targetWidth = (int)fullImage.Width - tx - 20;
-
-                            Console.WriteLine($"[BİLGİ] Sağ sınır belirlenmediği için sayfa sonuna kadar taranıyor. Genişlik: {targetWidth}");
-                        }
-
-                        // targetRect artık bu dinamik genişlikle oluşturulur
-                        targetRect = new Rect(tx, ty, targetWidth, th);
+                        // 1. Eğer kullanıcı elle bir genişlik vermişse onu kullan
+                        targetWidth = rule.ManualWidth.Value;
                     }
+                    else if (!string.IsNullOrEmpty(rule.RightLimitHeader) && nextColHeader != Rect.Empty)
+                    {
+                        // 2. Eğer sağda bir sınır kolonu ismi verilmişse ve bulunmuşsa oraya kadar al
+                        targetWidth = nextColHeader.X1 - tx - 10;
+                    }
+                    else
+                    {
+                        // 3. DİNAMİK SAĞ SINIR: Sağda limit yoksa, sayfa genişliğinden tx'i çıkararak 
+                        // kalan tüm alanı (en sağa kadar) al. 
+                        // 20-30 px bir güvenlik payı (padding) bırakmak iyidir.
+                        targetWidth = (int)fullImage.Width - tx - 20;
+
+                        Console.WriteLine($"[BİLGİ] Sağ sınır belirlenmediği için sayfa sonuna kadar taranıyor. Genişlik: {targetWidth}");
+                    }
+
+                    // targetRect artık bu dinamik genişlikle oluşturulur
+                    targetRect = new Rect(tx, ty, targetWidth, th);
                 }
             } // 'page' burada dispose edildi. Engine artık yeni bir process için hazır.
 

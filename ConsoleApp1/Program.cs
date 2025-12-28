@@ -34,59 +34,60 @@ namespace YmmOcrSistemi
             var rule = new OcrRule
             {
                 FieldName = "Tevkifat_Uygulanmayan_Vergi_Toplami",
-                StartAnchor = "TEVKİFAT UYGULANMAYAN İŞLEMLER",
-                ColumnHeader = "Vergi",
-                RightLimitHeader = "", // Boş bırakıldığında otomatik olarak sayfa sonuna kadar tarar
-                EndAnchor = "KISMİ TEVKİFAT UYGULANAN İŞLEMLER",
+                StartAnchor = "KISMI TEVKIFAT KAPSAMINA GİREN İŞLEMLER",
+                ColumnHeader = "İadeye Konu Olan KDV",
+                RightLimitHeader = "", // Boş bırakıldığında otomatik olarak sayfa sonuna (Sağ taraf) kadar tarar
+                EndAnchor = "İade Edilebilir KDV",
                 XOffset = 0,
                 ManualWidth = null, // Otomatik hesaplanması için null bırakın
                 Type = ExtractionType.TableColumnSum
             };
 
+            var settings = new MagickReadSettings { Density = new Density(300, 300) };
+
             using (var images = new MagickImageCollection())
             {
-                images.Read(pdfPath, new MagickReadSettings { Density = new Density(300) });
+                images.Read(pdfPath, settings);
 
-                var result = processor.ProcessRule(images[0], rule);
+                object finalResult = null;
+                int foundOnPage = -1;
 
-                if (result is decimal total)
+                // TÜM SAYFALARI DÖNÜYORUZ
+                for (int i = 0; i < images.Count; i++)
                 {
-                    Console.WriteLine($"{rule.FieldName}: {total:N2} TL");
+                    Console.WriteLine($"Sayfa {i + 1} kontrol ediliyor...");
+                    var result = processor.ProcessRule(images[i], rule);
+
+                    if (result != null)
+                    {
+                        finalResult = result;
+                        foundOnPage = i + 1;
+
+                        if (result is decimal total)
+                        {
+                            Console.WriteLine($"{rule.FieldName}: {total:N2} TL");
+                        }
+                        else if (result is List<string> list)
+                        {
+                            list.ForEach(x => Console.WriteLine($"Satır: {x}"));
+                        }
+
+                        break; // Veriyi bulduğumuz an döngüden çıkıyoruz
+                    }
                 }
-                else if (result is List<string> list)
+
+                if (finalResult != null)
                 {
-                    list.ForEach(x => Console.WriteLine($"Satır: {x}"));
+                    Console.WriteLine($"Veri {foundOnPage}. sayfada bulundu!");
+                    Console.WriteLine($"Sonuç: {finalResult}");
+                }
+                else
+                {
+                    Console.WriteLine("Aranan çapalar hiçbir sayfada bulunamadı.");
                 }
             }
 
             Console.ReadLine();
         }
-        static decimal CalculateTotal(List<string> values)
-        {
-            decimal total = 0;
-            foreach (var v in values)
-            {
-                // Regex ile sadece rakam, nokta ve virgülü al (diğer her şeyi temizle)
-                string clean = Regex.Replace(v, @"[^0-9,\.]", "");
-
-                if (string.IsNullOrEmpty(clean)) continue;
-
-                try
-                {
-                    // Türkiye formatı: 86.508,76 -> 86508.76 çevrimi
-                    // Önce binlik ayıracı (nokta) sil, sonra virgülü noktaya çevir
-                    if (clean.Contains(",") && clean.Contains("."))
-                        clean = clean.Replace(".", "");
-
-                    clean = clean.Replace(",", ".");
-
-                    if (decimal.TryParse(clean, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal d))
-                        total += d;
-                }
-                catch { /* Hatalı satırı atla */ }
-            }
-            return total;
-        }
-
     }
 }
