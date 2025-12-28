@@ -23,7 +23,6 @@ namespace ConsoleApp1
 
         public object ProcessRule(IMagickImage<byte> fullImage, OcrRule rule)
         {
-            // ÖNCE koordinatları tespit ediyoruz ve 'page' nesnesini hemen serbest bırakıyoruz
             Rect targetRect = Rect.Empty;
             Rect sectionStart = Rect.Empty;
             Rect sectionEnd = Rect.Empty;
@@ -32,73 +31,71 @@ namespace ConsoleApp1
             using (var pix = Pix.LoadFromMemory(fullImage.ToByteArray(MagickFormat.Png)))
             using (var page = _engine.Process(pix))
             {
+                // 1. Önce başlangıç çapasını tüm sayfada ara
                 sectionStart = FindTextCoordinates(page, rule.StartAnchor);
-                sectionEnd = FindTextCoordinates(page, rule.EndAnchor);
 
+                if (sectionStart == Rect.Empty) return null;
+
+                // 2. KRİTİK DÜZELTME: Bitiş çapasını sadece başlangıç çapasının ALTINDA ara
+                // sectionStart.Y1'den başlayarak sayfa sonuna (10000) kadar ara
+                sectionEnd = FindTextWithConstraint(page, rule.EndAnchor, sectionStart.Y1, 10000);
+
+                // 3. PARÇALI TABLO KONTROLÜ
+                // Eğer bitiş çapası bulunamadıysa VEYA mantıksız bir yerdeyse sayfa sonuna kadar al
+                if (sectionEnd == Rect.Empty || sectionEnd.Y1 <= sectionStart.Y1)
+                {
+                    int pageBottom = (int)fullImage.Height - 20;
+                    sectionEnd = new Rect(0, pageBottom, (int)fullImage.Width, 10);
+                    Console.WriteLine($"[BİLGİ] '{rule.FieldName}' için bitiş bulunamadı, sayfa sonu hedef alındı. (Y: {pageBottom})");
+                }
+
+                // 4. Kolon başlıklarını sectionStart ve sectionEnd arasında ara
                 colHeader = FindTextWithConstraint(page, rule.ColumnHeader, sectionStart.Y1, sectionEnd.Y1);
                 var nextColHeader = FindTextWithConstraint(page, rule.RightLimitHeader, sectionStart.Y1, sectionEnd.Y1);
 
-                // Eğer bu sayfada çapalar yoksa, hiç zorlamadan null dön
-                if (sectionStart == Rect.Empty || sectionEnd == Rect.Empty)
-                {
-                    return null;
-                }
-
                 if (colHeader != Rect.Empty)
                 {
-                    // Mavi Kutu Hesaplama Mantığı [cite: 35, 54]
                     int tx = colHeader.X1 + rule.XOffset;
-                    int ty = colHeader.Y2 + 10;
-                    int th = sectionEnd.Y1 - ty - 10;
+                    int ty = colHeader.Y2 + 5;
+                    int th = sectionEnd.Y1 - ty - 5;
                     int targetWidth;
 
                     if (rule.ManualWidth.HasValue)
                     {
-                        // 1. Eğer kullanıcı elle bir genişlik vermişse onu kullan
                         targetWidth = rule.ManualWidth.Value;
                     }
                     else if (!string.IsNullOrEmpty(rule.RightLimitHeader) && nextColHeader != Rect.Empty)
                     {
-                        // 2. Eğer sağda bir sınır kolonu ismi verilmişse ve bulunmuşsa oraya kadar al
+                        // RightLimitHeaderXOffset geliştirmesini koruyoruz
                         targetWidth = nextColHeader.X1 - (rule.RightLimitHeaderXOffset ?? 0) - tx - 10;
                     }
                     else
                     {
-                        // 3. DİNAMİK SAĞ SINIR: Sağda limit yoksa, sayfa genişliğinden tx'i çıkararak 
-                        // kalan tüm alanı (en sağa kadar) al. 
-                        // 20-30 px bir güvenlik payı (padding) bırakmak iyidir.
                         targetWidth = (int)fullImage.Width - tx - 20;
-
-                        Console.WriteLine($"[BİLGİ] Sağ sınır belirlenmediği için sayfa sonuna kadar taranıyor. Genişlik: {targetWidth}");
                     }
 
-                    // targetRect artık bu dinamik genişlikle oluşturulur
                     targetRect = new Rect(tx, ty, targetWidth, th);
                 }
-            } // 'page' burada dispose edildi. Engine artık yeni bir process için hazır.
+            }
 
             if (targetRect == Rect.Empty)
             {
-                Console.WriteLine("[HATA] Gerekli alanlar tespit edilemedi.");
-                return new List<string>();
+                Console.WriteLine($"[HATA] '{rule.FieldName}' için geçerli bir tarama alanı oluşturulamadı.");
+                return null; // Program.cs'de birleştirebilmek için null dönüyoruz
             }
 
-            // --- ADIM 2: Debug ve OCR (Engine serbest) ---
+            // --- OCR ve Veri İşleme ---
             GenerateDebugImages(fullImage, rule.FieldName, sectionStart, sectionEnd, targetRect);
             var rawLines = PerformCropAndOcr(fullImage, targetRect);
 
-            // --- ADIM 3: Veri Tipi İşleme ---
             if (rule.Type == ExtractionType.TableColumnSum)
             {
                 decimal total = 0;
-                foreach (var line in rawLines)
-                {
-                    total += ParseTurkishNumber(line);
-                }
-                return total; // Sayısal toplam döndür
+                foreach (var line in rawLines) total += ParseTurkishNumber(line);
+                return total;
             }
 
-            return rawLines; // Liste olarak döndür
+            return rawLines;
         }
 
         private List<string> PerformCropAndOcr(IMagickImage<byte> img, Rect region)
