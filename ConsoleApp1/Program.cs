@@ -15,7 +15,7 @@ namespace YmmOcrSistemi
         static void Main(string[] args)
         {
             string tessData = @"C:\ocr";
-            string pdfPath = @"D:\input1.pdf";
+            string pdfPath = @"D:\input3.pdf";
 
             var processor = new TableRegionProcessor(tessData);
 
@@ -33,14 +33,15 @@ namespace YmmOcrSistemi
 
             var rule = new OcrRule
             {
-                FieldName = "Tevkifat_Uygulanmayan_Vergi_Toplami",
+                FieldName = "Tevkifat_Uygulanmayan_Vergi_Toplami2",
                 StartAnchor = "KISMI TEVKIFAT KAPSAMINA GİREN İŞLEMLER",
-                ColumnHeader = "İadeye Konu Olan KDV",
-                RightLimitHeader = "", // Boş bırakıldığında otomatik olarak sayfa sonuna (Sağ taraf) kadar tarar
+                ColumnHeader = "Teslim ve Hizmet Tutarı",
+                RightLimitHeader = "İadeye Konu Olan KDV", // Boş bırakıldığında otomatik olarak sayfa sonuna (Sağ taraf) kadar tarar
+                RightLimitHeaderXOffset = 100,
                 EndAnchor = "İade Edilebilir KDV",
-                XOffset = 0,
+                XOffset = 50,
                 ManualWidth = null, // Otomatik hesaplanması için null bırakın
-                Type = ExtractionType.TableColumnSum
+                Type = ExtractionType.TableColumnList
             };
 
             var settings = new MagickReadSettings { Density = new Density(300, 300) };

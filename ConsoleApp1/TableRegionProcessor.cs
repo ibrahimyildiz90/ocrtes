@@ -60,7 +60,7 @@ namespace ConsoleApp1
                     else if (!string.IsNullOrEmpty(rule.RightLimitHeader) && nextColHeader != Rect.Empty)
                     {
                         // 2. Eğer sağda bir sınır kolonu ismi verilmişse ve bulunmuşsa oraya kadar al
-                        targetWidth = nextColHeader.X1 - tx - 10;
+                        targetWidth = nextColHeader.X1 - (rule.RightLimitHeaderXOffset ?? 0) - tx - 10;
                     }
                     else
                     {
