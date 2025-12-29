@@ -8,7 +8,6 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Tesseract;
-using YmmOcrSistemi;
 
 namespace ConsoleApp1
 {
@@ -98,7 +97,7 @@ namespace ConsoleApp1
             return rawLines;
         }
 
-        private List<string> PerformCropAndOcr(IMagickImage<byte> img, Rect region)
+        public List<string> PerformCropAndOcr(IMagickImage<byte> img, Rect region)
         {
             using (var cropped = img.Clone())
             {
@@ -116,7 +115,7 @@ namespace ConsoleApp1
             }
         }
 
-        private void GenerateDebugImages(IMagickImage<byte> img, string fieldName, Rect start, Rect end, Rect target)
+        protected void GenerateDebugImages(IMagickImage<byte> img, string fieldName, Rect start, Rect end, Rect target)
         {
             string safeName = fieldName.Replace(" ", "_");
 
@@ -140,9 +139,9 @@ namespace ConsoleApp1
             }
         }
 
-        private Rect FindTextCoordinates(Page page, string text) => FindTextWithConstraint(page, text, 0, 10000);
+        protected Rect FindTextCoordinates(Page page, string text) => FindTextWithConstraint(page, text, 0, 10000);
 
-        private Rect FindTextWithConstraint(Page page, string fullText, int minY, int maxY)
+        protected Rect FindTextWithConstraint(Page page, string fullText, int minY, int maxY)
         {
             // Eğer aranacak metin null veya boşsa, işlem yapmadan boş Rect dön.
             if (string.IsNullOrEmpty(fullText))
@@ -184,7 +183,7 @@ namespace ConsoleApp1
             return Rect.Empty;
         }
 
-        private decimal ParseTurkishNumber(string text)
+        protected decimal ParseTurkishNumber(string text)
         {
             if (string.IsNullOrWhiteSpace(text)) return 0;
 
